@@ -1126,7 +1126,7 @@ class TrackpadMonitor {
         }
 
         scrollEventTap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
+            tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: eventMask,
