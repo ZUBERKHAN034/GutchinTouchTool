@@ -22,7 +22,6 @@
 		5CFF9E4308528010D641FB27 /* LogSidePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455785A555FBE4C61B590D01 /* LogSidePanel.swift */; };
 		603D6FCF4F48391C35B93546 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF557E7C62CB384D2603CF41 /* AppDelegate.swift */; };
 		6230CBEEB77C284A731579F3 /* UpdateCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C612017BFB150EB1A6D167 /* UpdateCheckerTests.swift */; };
-		6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */; };
 		71277C1FBC48775A8A72FD72 /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A2593070526ABC2E757364 /* ModelTests.swift */; };
 		8F56617241408E093C881A1A /* GestureLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591388447B863AB1271B38FE /* GestureLog.swift */; };
 		903BFC8E7D8AD82702A59CE0 /* Trigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80BACC55ACE7DF1BF21705C /* Trigger.swift */; };
@@ -93,7 +92,6 @@
 		BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchView.swift; sourceTree = "<group>"; };
 		BE0D11D3DF027F5FA85DFF70 /* GutchinTouchTool.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GutchinTouchTool.entitlements; sourceTree = "<group>"; };
 		BFBEC8838C761C0A2C708534 /* GutchinTouchTool.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GutchinTouchTool.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateBadgeView.swift; sourceTree = "<group>"; };
 		CDB2F47B2A8F6BC6D885F30A /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		CF557E7C62CB384D2603CF41 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		F1386A246B233DDEA04412DD /* SerializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializationTests.swift; sourceTree = "<group>"; };
@@ -132,7 +130,6 @@
 				7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */,
 				3F9AA128B0872E58AF518488 /* TriggerListPanel.swift */,
 				4928C96FA781BE1A45EEAAC5 /* TutorialView.swift */,
-				C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -328,7 +325,6 @@
 				55F610E7C9360B6C61D064E4 /* TriggerListPanel.swift in Sources */,
 				93A2106594D8B52D8E09F752 /* TriggerType.swift in Sources */,
 				98A7452625E0A2FF61355E95 /* TutorialView.swift in Sources */,
-				6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */,
 				BAB8ACAE12BE2DA856CBFD4E /* UpdateChecker.swift in Sources */,
 				5A8F422110A23E9ED97A3EF4 /* WindowManager.swift in Sources */,
 			);

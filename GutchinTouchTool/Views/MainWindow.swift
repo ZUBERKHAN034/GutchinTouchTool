@@ -213,7 +213,6 @@ struct MainWindow: View {
                 HStack(spacing: 8) {
                     Text("GutchinTouchTool")
                         .font(.headline)
-                    UpdateBadgeView(updateChecker: appState.updateChecker)
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             appState.toggleGlobalEnabled()
