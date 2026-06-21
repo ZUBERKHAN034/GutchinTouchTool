@@ -172,10 +172,10 @@ class ActionExecutor {
     private static func sendKeyStroke(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         GestureLog.shared.logFromAnyThread("sendKeyStroke keyCode=\(keyCode) mods=\(flags.rawValue)", level: .action)
 
-        // Post at HID level first (catches system shortcuts like Cmd+Shift+4),
-        // then session level as fallback (catches app-specific shortcuts).
+        // Post at HID level so system shortcuts (screenshot, Spotlight, etc.)
+        // are intercepted properly. Session level would also work for app
+        // shortcuts, but posting both causes duplicates.
         sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cghidEventTap, label: "cghidEventTap")
-        sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "cgSessionEventTap")
     }
 
     private static func sendViaOsascript(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
