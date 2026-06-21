@@ -686,8 +686,6 @@ class TrackpadMonitor {
         circleDrawingActive = true
 
         let eventMask: CGEventMask = (1 << CGEventType.mouseMoved.rawValue)
-            | (1 << CGEventType.leftMouseDragged.rawValue)
-            | (1 << CGEventType.rightMouseDragged.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -727,10 +725,9 @@ class TrackpadMonitor {
         trianglePoints.append((x: x, y: y))
         // Don't check triangle if circle already fired this session, or triangle already fired
         guard !triangleFired, circleFireCount == 0, trianglePoints.count >= 20 else { return }
-        // Start suppressing mouse once we have enough points for a potential drawing
-        if trianglePoints.count == 20 { startSuppressingMouse() }
         if isTriangle() {
             triangleFired = true
+            startSuppressingMouse()  // only after confirmed
             resetCircleState()  // suppress circle since triangle won
             DispatchQueue.main.async { [self] in
                 GestureLog.shared.logFromAnyThread("Drawing: Triangle detected", level: .detect)
@@ -853,10 +850,9 @@ class TrackpadMonitor {
         let side: EdgeSide = onLeft ? .left : .right
 
         guard let lastY = edgeSlideLastY, edgeSlideEdge == side else {
-            // Start tracking
+            // Start tracking — no suppression yet
             edgeSlideLastY = y
             edgeSlideEdge = side
-            startSuppressingMouse()
             return
         }
 
@@ -871,6 +867,7 @@ class TrackpadMonitor {
             case (.right, false): gesture = .rightEdgeSlideDown
             }
             edgeSlideLastY = y
+            startSuppressingMouse()   // only after gesture confirmed
             DispatchQueue.main.async { [self] in
                 fireGesture(gesture)
             }
