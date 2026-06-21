@@ -15,14 +15,11 @@ class KeyboardMonitor: ObservableObject {
         completionHandler = completion
         isMonitoring = true
 
-        // Local monitor as fallback if CGEventTap fails (no accessibility permission)
-        // When the event tap is active, events are swallowed at the tap level so this
-        // monitor never fires for keyDown — only Escape is handled by the tap directly.
+        // Local monitor for key events within our app
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, self.isMonitoring else { return event }
 
-            // If the event tap is active, the event was already swallowed at tap level
-            // and we should never reach here. This is a fallback path only.
+            // Escape cancels recording without setting a shortcut
             if event.keyCode == 53 {
                 DispatchQueue.main.async { self.stopRecording() }
                 return nil
@@ -36,10 +33,8 @@ class KeyboardMonitor: ObservableObject {
             return nil
         }
 
-        // CGEventTap to capture ALL key events during recording — this sits at
-        // the head so it swallows events before the trigger tap or system sees them,
-        // preventing registered triggers and system shortcuts (Spotlight, etc.) from firing.
-        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        // CGEventTap for system-intercepted keys (fn keys, media keys etc.)
+        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
         let retainedSelf = Unmanaged.passRetained(self)
 
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
@@ -57,15 +52,6 @@ class KeyboardMonitor: ObservableObject {
 
             if type == .keyDown {
                 let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-
-                // Escape cancels recording
-                if keyCode == 53 {
-                    DispatchQueue.main.async {
-                        monitor.stopRecording()
-                    }
-                    return nil
-                }
-
                 let flags = event.flags
                 var modifiers: NSEvent.ModifierFlags = []
                 if flags.contains(.maskCommand) { modifiers.insert(.command) }
@@ -77,7 +63,7 @@ class KeyboardMonitor: ObservableObject {
                 DispatchQueue.main.async {
                     monitor.finishRecording(with: shortcut)
                 }
-                return nil // swallow — don't let it trigger anything
+                return nil // swallow
             }
 
             return Unmanaged.passRetained(event)
@@ -183,11 +169,9 @@ class KeyboardMonitor: ObservableObject {
                 return Unmanaged.passRetained(event)
             }
 
-            // During recording, swallow all key events so they don't trigger
-            // system shortcuts (Spotlight, screenshots, etc.) — the local
-            // monitor inside the app handles capturing the keystroke.
+            // Don't intercept while recording shortcuts
             if monitor.isMonitoring {
-                return nil
+                return Unmanaged.passRetained(event)
             }
 
             if type == .keyDown {
