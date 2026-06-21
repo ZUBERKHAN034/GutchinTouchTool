@@ -1069,16 +1069,6 @@ class TrackpadMonitor {
 
     // MARK: - NSEvent monitors for scroll/pinch/rotate + multitouch-based swipe detection
 
-    // Multitouch-based swipe tracking for 3+ finger swipes that macOS system
-    // gesture handlers may otherwise consume (4-finger Mission Control, etc.).
-    // Tracks raw finger positions from the IOKit-level multitouch callback.
-    private var multiSwipeFingers: Int = 0
-    private var multiSwipeStartTime: Date?
-    private var multiSwipeStartY: Float = 0
-    private var multiSwipeStartX: Float = 0
-    private var multiSwipeLastY: Float = 0
-    private var multiSwipeLastX: Float = 0
-
     private func setupNSEventMonitors() {
         let scrollHandler: (NSEvent) -> Void = { [weak self] e in self?.handleScroll(e) }
         let magnifyHandler: (NSEvent) -> Void = { [weak self] e in self?.handleMagnify(e) }
