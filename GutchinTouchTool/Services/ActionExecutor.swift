@@ -172,6 +172,9 @@ class ActionExecutor {
     private static func sendKeyStroke(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         GestureLog.shared.logFromAnyThread("sendKeyStroke keyCode=\(keyCode) mods=\(flags.rawValue)", level: .action)
 
+        // Post at HID level first (catches system shortcuts like Cmd+Shift+4),
+        // then session level as fallback (catches app-specific shortcuts).
+        sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cghidEventTap, label: "cghidEventTap")
         sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "cgSessionEventTap")
     }
 
@@ -246,13 +249,15 @@ class ActionExecutor {
         keyUp.setIntegerValueField(.eventSourceUserData, value: selfTag)
 
         // If our app is frontmost, activate the last known external app first
-        // so the keystroke reaches the app the user was actually working in
+        // so the keystroke reaches the app the user was actually working in.
+        // System shortcuts (screenshot, spotlight, etc.) work regardless since
+        // we post at the HID tap level.
         if let frontmost = NSWorkspace.shared.frontmostApplication,
            frontmost.bundleIdentifier == Bundle.main.bundleIdentifier,
            let target = lastExternalApp, !target.isTerminated {
             GestureLog.shared.logFromAnyThread("CGEvent[\(label)] activating \(target.localizedName ?? "?") before posting", level: .action)
-            target.activate()
-            usleep(100000) // 100ms for activation to take effect
+            target.activate(options: .activateIgnoringOtherApps)
+            usleep(150000) // 150ms for activation to take effect
         }
 
         keyDown.post(tap: tapPoint)
