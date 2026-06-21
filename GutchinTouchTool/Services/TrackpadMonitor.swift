@@ -551,17 +551,37 @@ class TrackpadMonitor {
             // Taps stay under 0.03. Use a threshold well below deliberate swipe.
             let swipeNormThreshold: Float = 0.07
 
-            // Must have significant movement in one direction and be fast (< 1s)
-            if max(absDy, absDx) > swipeNormThreshold && duration < 1.0 {
+            // Track whether we have meaningful position data
+            let hasMovement = max(absDy, absDx) > swipeNormThreshold
+
+            // Must have significant movement OR be a likely swipe (3+ fingers,
+            // not a tap duration, suggesting macOS consumed the gesture events)
+            let isLikelySwipe = duration > tapTimeout && duration < 1.0
+            let detected = hasMovement || isLikelySwipe
+
+            if detected && duration < 1.0 {
                 let isVertical = absDy > absDx
                 let direction: TrackpadGesture?
 
-                if isVertical {
-                    let up = dy < 0  // multitouch Y: 0 = top (away), 1 = bottom (toward user)
-                    direction = swipeGesture(fingers: multiSwipeFingers, direction: up ? .up : .down)
+                if hasMovement {
+                    // Use tracked movement to determine direction
+                    if isVertical {
+                        let up = dy < 0  // multitouch Y: 0 = top (away), 1 = bottom (toward user)
+                        direction = swipeGesture(fingers: multiSwipeFingers, direction: up ? .up : .down)
+                    } else {
+                        let left = dx < 0  // multitouch X: 0 = left, 1 = right
+                        direction = swipeGesture(fingers: multiSwipeFingers, direction: left ? .left : .right)
+                    }
                 } else {
-                    let left = dx < 0  // multitouch X: 0 = left, 1 = right
-                    direction = swipeGesture(fingers: multiSwipeFingers, direction: left ? .left : .right)
+                    // No tracked movement — macOS likely consumed the raw touch
+                    // data for a system gesture (Mission Control, App Exposé).
+                    // We can't determine direction from position, so log and skip
+                    // (the CGEventTap at session level should catch scroll events).
+                    GestureLog.shared.logFromAnyThread("Undirected \(multiSwipeFingers)f gesture (no movement data)", level: .detect)
+                    // Reset and let CGEventTap handle it
+                    multiSwipeStartTime = nil
+                    multiSwipeFingers = 0
+                    return
                 }
 
                 if let gesture = direction,
@@ -574,7 +594,7 @@ class TrackpadMonitor {
                     if !alreadyFired {
                         swipeFiredThisSession = true
                         lastSwipeFiredAt = Date()
-                        GestureLog.shared.logFromAnyThread("Swipe (multitouch) \(multiSwipeFingers)f dur=\(String(format: "%.2f", duration))s dy=\(String(format: "%.3f", dy))", level: .detect)
+                        GestureLog.shared.logFromAnyThread("Swipe (multitouch) \(multiSwipeFingers)f dy=\(String(format: "%.3f", dy))", level: .detect)
                         DispatchQueue.main.async { [self] in
                             fireGesture(gesture)
                         }
@@ -1113,12 +1133,25 @@ class TrackpadMonitor {
                         monitor.scrollTapStartTime = Date()
                     }
 
-                    // Debounce: reset timer on each new scroll event.
-                    // When the timer fires (no scrolling for 60ms), check for swipe.
-                    monitor.scrollTapDebounceTimer?.cancel()
-                    let timer = DispatchWorkItem { monitor.checkSwipeFromTap() }
-                    monitor.scrollTapDebounceTimer = timer
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: timer)
+                    let absX = abs(monitor.scrollCumulativeX)
+                    let absY = abs(monitor.scrollCumulativeY)
+                    let maxDelta = max(absX, absY)
+
+                    if maxDelta > monitor.swipeThreshold {
+                        // For 3+ finger gestures, fire immediately — these are
+                        // always swipes (system gestures like Mission Control),
+                        // never regular scrolling.
+                        if monitor.scrollEventFingers >= 3 {
+                            monitor.checkSwipeFromTap()
+                        } else {
+                            // For 2-finger gestures, use debounce to
+                            // distinguish swipes from regular scrolling.
+                            monitor.scrollTapDebounceTimer?.cancel()
+                            let timer = DispatchWorkItem { monitor.checkSwipeFromTap() }
+                            monitor.scrollTapDebounceTimer = timer
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: timer)
+                        }
+                    }
                 }
             }
 
@@ -1181,6 +1214,9 @@ class TrackpadMonitor {
             : (physicalUp ? .up : .down))
 
         if let gesture = gesture, velocity >= swipeMinVelocity(for: gesture) {
+            // Skip if any path already fired a swipe this session
+            guard !swipeFiredThisSession else { return }
+
             let alreadyFired = lastSwipeFiredAt.map { Date().timeIntervalSince($0) < swipeDedupInterval } ?? false
             if !alreadyFired {
                 swipeFiredThisSession = true
