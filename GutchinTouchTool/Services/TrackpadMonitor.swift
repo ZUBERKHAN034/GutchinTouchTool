@@ -148,6 +148,10 @@ class TrackpadMonitor {
     private var scrollCumulativeY: CGFloat = 0
     private var scrollTapStartTime: Date?
     private var scrollTapDebounceTimer: DispatchWorkItem?
+    /// Finger count captured at the time of the scroll event (set from currentFingers).
+    /// This is preserved across the 60ms debounce delay so checkSwipeFromTap doesn't
+    /// lose the finger count when peakFingers gets reset by the tap detection code.
+    private var scrollEventFingers: Int = 0
 
     // Double-tap detection state
     private var lastTwoFingerTapTime: Date?
@@ -1097,10 +1101,14 @@ class TrackpadMonitor {
             let deltaX = CGFloat(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2))
 
             if abs(deltaY) > 1 || abs(deltaX) > 1 {
-                // Accumulate on the main thread to keep it thread-safe
+                // Accumulate on the main thread to keep it thread-safe.
+                // Capture currentFingers at event time (the multitouch callback
+                // updates it at IOKit level, which fires before scroll events).
+                let fingers = monitor.currentFingers
                 DispatchQueue.main.async {
                     monitor.scrollCumulativeX += deltaX
                     monitor.scrollCumulativeY += deltaY
+                    monitor.scrollEventFingers = max(monitor.scrollEventFingers, fingers)
                     if monitor.scrollTapStartTime == nil {
                         monitor.scrollTapStartTime = Date()
                     }
@@ -1146,6 +1154,7 @@ class TrackpadMonitor {
             scrollCumulativeY = 0
             scrollTapStartTime = nil
             scrollTapDebounceTimer = nil
+            scrollEventFingers = 0
         }
 
         let absX = abs(scrollCumulativeX)
@@ -1156,8 +1165,9 @@ class TrackpadMonitor {
         let duration = scrollTapStartTime.map { Date().timeIntervalSince($0) } ?? 0
         let velocity = duration > 0 ? maxDelta / CGFloat(duration) : 0
 
-        // Use peakFingers from multitouch for accurate finger count
-        let fingerCount = max(peakFingers, 2)
+        // Use finger count captured at scroll event time — this is preserved
+        // across the debounce delay even if peakFingers gets reset.
+        let fingerCount = max(scrollEventFingers, 2)
 
         let isInverted = UserDefaults.standard.bool(forKey: "com.apple.swipescrolldirection")
         let physicalUp = (scrollCumulativeY > 0) != isInverted
