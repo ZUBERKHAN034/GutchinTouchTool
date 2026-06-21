@@ -1169,7 +1169,11 @@ class TrackpadMonitor {
         // across the debounce delay even if peakFingers gets reset.
         let fingerCount = max(scrollEventFingers, 2)
 
-        let isInverted = UserDefaults.standard.bool(forKey: "com.apple.swipescrolldirection")
+        // UserDefaults "com.apple.swipescrolldirection" is true when natural
+        // scrolling is ON. isDirectionInvertedFromDevice is the OPPOSITE:
+        // false when natural scrolling is ON (matches device native direction).
+        let naturalScrollingOn = UserDefaults.standard.bool(forKey: "com.apple.swipescrolldirection")
+        let isInverted = !naturalScrollingOn
         let physicalUp = (scrollCumulativeY > 0) != isInverted
         let physicalLeft = (scrollCumulativeX > 0) != isInverted
         let gesture = swipeGesture(fingers: fingerCount, direction: absX > absY
