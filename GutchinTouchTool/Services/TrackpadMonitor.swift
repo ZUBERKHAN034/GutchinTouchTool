@@ -1109,10 +1109,19 @@ class TrackpadMonitor {
                 scrollDeltaX = 0; scrollDeltaY = 0; scrollFingerCount = 0; scrollStartTime = nil; return
             }
             let gesture: TrackpadGesture?
+
+            // scrollDeltaY follows the natural scrolling setting.
+            // isDirectionInvertedFromDevice is true when natural scrolling
+            // is turned OFF (inverted from the device's native direction).
+            // When inverted, scrollDeltaY > 0 means physical finger DOWN.
+            let isInverted = event.isDirectionInvertedFromDevice
+
             if absX > absY {
-                gesture = swipeGesture(fingers: scrollFingerCount, direction: scrollDeltaX > 0 ? .left : .right)
+                let left = (scrollDeltaX > 0) != isInverted
+                gesture = swipeGesture(fingers: scrollFingerCount, direction: left ? .left : .right)
             } else {
-                gesture = swipeGesture(fingers: scrollFingerCount, direction: scrollDeltaY > 0 ? .up : .down)
+                let up = (scrollDeltaY > 0) != isInverted
+                gesture = swipeGesture(fingers: scrollFingerCount, direction: up ? .up : .down)
             }
             if let gesture = gesture {
                 let minVelocity = swipeMinVelocity(for: gesture)
