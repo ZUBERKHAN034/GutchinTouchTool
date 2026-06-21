@@ -140,6 +140,15 @@ class TrackpadMonitor {
     private var multiSwipeLastY: Float = 0
     private var multiSwipeLastX: Float = 0
 
+    // CGEventTap for scroll events at HID level — catches 4-finger swipes
+    // before macOS system gesture handlers consume them.
+    private var scrollEventTap: CFMachPort?
+    private var scrollEventTapRunLoopSource: CFRunLoopSource?
+    private var scrollCumulativeX: CGFloat = 0
+    private var scrollCumulativeY: CGFloat = 0
+    private var scrollTapStartTime: Date?
+    private var scrollTapDebounceTimer: DispatchWorkItem?
+
     // Double-tap detection state
     private var lastTwoFingerTapTime: Date?
     private var doubleTapTimer: DispatchWorkItem?
@@ -535,8 +544,8 @@ class TrackpadMonitor {
             let absDx = abs(dx)
 
             // A deliberate swipe moves roughly 0.15-0.5 in normalized coords.
-            // Taps stay under 0.05. Use a threshold that separates swipe from tap.
-            let swipeNormThreshold: Float = 0.12
+            // Taps stay under 0.03. Use a threshold well below deliberate swipe.
+            let swipeNormThreshold: Float = 0.07
 
             // Must have significant movement in one direction and be fast (< 1s)
             if max(absDy, absDx) > swipeNormThreshold && duration < 1.0 {
@@ -551,14 +560,17 @@ class TrackpadMonitor {
                     direction = swipeGesture(fingers: multiSwipeFingers, direction: left ? .left : .right)
                 }
 
-                if let gesture = direction {
+                if let gesture = direction,
+                   multiSwipeFingers <= 4 || absDy > 0.15 || absDx > 0.15 {
+                    // For 5+ finger taps: require more movement to prevent spurious swipe
+                    // from slight finger jitter during a tap.
 
                     // Deduplicate: skip if NSEvent handler already fired a swipe recently
                     let alreadyFired = lastSwipeFiredAt.map { Date().timeIntervalSince($0) < swipeDedupInterval } ?? false
                     if !alreadyFired {
                         swipeFiredThisSession = true
                         lastSwipeFiredAt = Date()
-                        GestureLog.shared.logFromAnyThread("Swipe (multitouch) \(multiSwipeFingers)f duration=\(String(format: "%.2f", duration))s", level: .detect)
+                        GestureLog.shared.logFromAnyThread("Swipe (multitouch) \(multiSwipeFingers)f dur=\(String(format: "%.2f", duration))s dy=\(String(format: "%.3f", dy))", level: .detect)
                         DispatchQueue.main.async { [self] in
                             fireGesture(gesture)
                         }
@@ -729,13 +741,13 @@ class TrackpadMonitor {
 
                 if circleCumulativeAngle > 0 {
                     DispatchQueue.main.async { [self] in
-                        GestureLog.shared.logFromAnyThread("Circle: Counter-Clockwise (#\(circleFireCount))", level: .detect)
-                        fireGesture(.circleCounterClockwise)
+                        GestureLog.shared.logFromAnyThread("Circle: Clockwise (#\(circleFireCount))", level: .detect)
+                        fireGesture(.circleClockwise)
                     }
                 } else {
                     DispatchQueue.main.async { [self] in
-                        GestureLog.shared.logFromAnyThread("Circle: Clockwise (#\(circleFireCount))", level: .detect)
-                        fireGesture(.circleClockwise)
+                        GestureLog.shared.logFromAnyThread("Circle: Counter-Clockwise (#\(circleFireCount))", level: .detect)
+                        fireGesture(.circleCounterClockwise)
                     }
                 }
             }
@@ -962,10 +974,10 @@ class TrackpadMonitor {
             // Fire once per step, then advance the anchor
             let gesture: TrackpadGesture
             switch (side, deltaY > 0) {
-            case (.left, true):   gesture = .leftEdgeSlideUp
-            case (.left, false):  gesture = .leftEdgeSlideDown
-            case (.right, true):  gesture = .rightEdgeSlideUp
-            case (.right, false): gesture = .rightEdgeSlideDown
+            case (.left, true):   gesture = .leftEdgeSlideDown
+            case (.left, false):  gesture = .leftEdgeSlideUp
+            case (.right, true):  gesture = .rightEdgeSlideDown
+            case (.right, false): gesture = .rightEdgeSlideUp
             }
             edgeSlideLastY = y
             startSuppressingMouse()   // only after gesture confirmed
@@ -1069,7 +1081,105 @@ class TrackpadMonitor {
 
     // MARK: - NSEvent monitors for scroll/pinch/rotate + multitouch-based swipe detection
 
+    /// CGEventTap for scroll wheel events at `.cghidEventTap` level.
+    /// This is the lowest possible tap level — it sees ALL scroll events before
+    /// macOS system gesture handlers (Mission Control, App Exposé) consume them.
+    private func setupScrollEventTap() {
+        let eventMask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
+
+        let retainedSelf = Unmanaged.passRetained(self)
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+            guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+            let monitor = Unmanaged<TrackpadMonitor>.fromOpaque(refcon).takeUnretainedValue()
+
+            // Read pixel-based scroll deltas (96 = Y axis, 97 = X axis)
+            let deltaY = CGFloat(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1))
+            let deltaX = CGFloat(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2))
+
+            if abs(deltaY) > 1 || abs(deltaX) > 1 {
+                // Accumulate on the main thread to keep it thread-safe
+                DispatchQueue.main.async {
+                    monitor.scrollCumulativeX += deltaX
+                    monitor.scrollCumulativeY += deltaY
+                    if monitor.scrollTapStartTime == nil {
+                        monitor.scrollTapStartTime = Date()
+                    }
+
+                    // Debounce: reset timer on each new scroll event.
+                    // When the timer fires (no scrolling for 60ms), check for swipe.
+                    monitor.scrollTapDebounceTimer?.cancel()
+                    let timer = DispatchWorkItem { monitor.checkSwipeFromTap() }
+                    monitor.scrollTapDebounceTimer = timer
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: timer)
+                }
+            }
+
+            return Unmanaged.passRetained(event)
+        }
+
+        scrollEventTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: callback,
+            userInfo: retainedSelf.toOpaque()
+        )
+
+        if let tap = scrollEventTap {
+            scrollEventTapRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            if let source = scrollEventTapRunLoopSource {
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+        } else {
+            retainedSelf.release()
+            NSLog("[TrackpadMonitor] Failed to create scroll event tap (needs accessibility permission)")
+        }
+    }
+
+    /// Called by the CGEventTap debounce timer when scrolling stops.
+    /// Checks if accumulated scroll deltas constitute a swipe.
+    private func checkSwipeFromTap() {
+        defer {
+            scrollCumulativeX = 0
+            scrollCumulativeY = 0
+            scrollTapStartTime = nil
+            scrollTapDebounceTimer = nil
+        }
+
+        let absX = abs(scrollCumulativeX)
+        let absY = abs(scrollCumulativeY)
+        let maxDelta = max(absX, absY)
+        guard maxDelta > swipeThreshold else { return }
+
+        let duration = scrollTapStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        let velocity = duration > 0 ? maxDelta / CGFloat(duration) : 0
+
+        // Use peakFingers from multitouch for accurate finger count
+        let fingerCount = max(peakFingers, 2)
+
+        let isInverted = UserDefaults.standard.bool(forKey: "com.apple.swipescrolldirection")
+        let physicalUp = (scrollCumulativeY > 0) != isInverted
+        let physicalLeft = (scrollCumulativeX > 0) != isInverted
+        let gesture = swipeGesture(fingers: fingerCount, direction: absX > absY
+            ? (physicalLeft ? .left : .right)
+            : (physicalUp ? .up : .down))
+
+        if let gesture = gesture, velocity >= swipeMinVelocity(for: gesture) {
+            let alreadyFired = lastSwipeFiredAt.map { Date().timeIntervalSince($0) < swipeDedupInterval } ?? false
+            if !alreadyFired {
+                swipeFiredThisSession = true
+                lastSwipeFiredAt = Date()
+                GestureLog.shared.logFromAnyThread("Swipe (event tap) \(fingerCount)f vel=\(Int(velocity))", level: .detect)
+                fireGesture(gesture)
+            }
+        }
+    }
+
     private func setupNSEventMonitors() {
+        setupScrollEventTap()
+
         let scrollHandler: (NSEvent) -> Void = { [weak self] e in self?.handleScroll(e) }
         let magnifyHandler: (NSEvent) -> Void = { [weak self] e in self?.handleMagnify(e) }
         let rotateHandler: (NSEvent) -> Void = { [weak self] e in self?.handleRotate(e) }
@@ -1484,6 +1594,18 @@ class TrackpadMonitor {
     }
 
     func unregisterAll() {
+        // Clean up scroll event tap
+        scrollTapDebounceTimer?.cancel()
+        scrollTapDebounceTimer = nil
+        if let tap = scrollEventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            scrollEventTap = nil
+        }
+        if let source = scrollEventTapRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            scrollEventTapRunLoopSource = nil
+        }
+
         tearDownClickSuppressionTap()
         for monitor in monitors {
             NSEvent.removeMonitor(monitor)
