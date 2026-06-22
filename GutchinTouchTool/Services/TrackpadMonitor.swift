@@ -589,12 +589,24 @@ class TrackpadMonitor {
                         direction = swipeGesture(fingers: multiSwipeFingers, direction: left ? .left : .right)
                     }
                 } else {
-                    // No tracked movement — macOS likely consumed the raw touch
-                    // data for a system gesture (Mission Control, App Exposé).
-                    // We can't determine direction from position, so log and skip
-                    // (the CGEventTap at session level should catch scroll events).
-                    GestureLog.shared.logFromAnyThread("Undirected \(multiSwipeFingers)f gesture (no movement data)", level: .detect)
-                    // Reset and let CGEventTap handle it
+                    // No tracked movement — macOS consumed the raw touch data
+                    // for a system gesture (Mission Control, App Exposé).
+                    // Since we can't determine the actual direction, fire all
+                    // 4 directions. The trigger matching in fireGesture will
+                    // only execute the ones the user configured.
+                    GestureLog.shared.logFromAnyThread("Undirected \(multiSwipeFingers)f gesture — firing all directions", level: .detect)
+                    for dir: TrackpadGesture in [
+                        .fourFingerSwipeUp, .fourFingerSwipeDown,
+                        .fourFingerSwipeLeft, .fourFingerSwipeRight
+                    ] {
+                        // Only fire if there's a registered trigger for this direction
+                        let hasTrigger = registeredTriggers.contains { $0.gesture == dir }
+                        if hasTrigger {
+                            DispatchQueue.main.async { [self] in
+                                fireGesture(dir)
+                            }
+                        }
+                    }
                     multiSwipeStartTime = nil
                     multiSwipeFingers = 0
                     return
@@ -1146,12 +1158,11 @@ class TrackpadMonitor {
             let fingers = monitor.currentFingers
 
             // Decide whether to consume or pass through BEFORE dispatching.
-            // Once multitouch has reported a frame, 3+ finger gestures are
-            // always system gestures — consume them here so the app can
-            // process them as regular swipes (Mission Control never sees them).
-            // For 2-finger gestures and events before multitouch activation,
-            // pass through normally to preserve regular scrolling.
-            let shouldConsume = monitor.multitouchHasReported && (fingers >= 3 || monitor.scrollEventFingers >= 3)
+            // Once multitouch has reported, 4+ finger gestures are always system
+            // gestures (Mission Control, App Exposé). Consuming them here lets
+            // the app process them directly. 3-finger gestures pass through (they
+            // are reliably detected by the NSEvent handler).
+            let shouldConsume = monitor.multitouchHasReported && (fingers >= 4 || monitor.scrollEventFingers >= 4)
 
             DispatchQueue.main.async {
                 monitor.scrollCumulativeX += deltaX
@@ -1166,7 +1177,7 @@ class TrackpadMonitor {
                 let maxDelta = max(absX, absY)
 
                 if maxDelta > monitor.swipeThreshold {
-                    if monitor.scrollEventFingers >= 3 {
+                    if monitor.scrollEventFingers >= 4 {
                         monitor.checkSwipeFromTap()
                     } else {
                         monitor.scrollTapDebounceTimer?.cancel()
