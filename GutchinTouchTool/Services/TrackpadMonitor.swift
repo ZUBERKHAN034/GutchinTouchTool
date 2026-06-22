@@ -99,6 +99,7 @@ class TrackpadMonitor {
     private var scrollDeltaX: CGFloat = 0
     private var scrollDeltaY: CGFloat = 0
     private var scrollFingerCount: Int = 0
+    private var scrollPeakFingers: Int = 0
     private var scrollStartTime: Date?
     private let swipeThreshold: CGFloat = 50
     // Minimum velocity (points/sec) for a swipe to fire — per-gesture, fast flick vs slow scroll
@@ -333,6 +334,7 @@ class TrackpadMonitor {
         if activeFingersCount > 0 && previousFingers == 0 && !tipTapPending {
             touchBegan = Date()
             peakFingers = activeFingersCount
+            scrollPeakFingers = 0
             gestureConsumed = false
             hadOneFingerRest = false
             oneFingerRestX = nil
@@ -342,6 +344,11 @@ class TrackpadMonitor {
 
         if activeFingersCount > peakFingers {
             peakFingers = activeFingersCount
+        }
+
+        // Track peak fingers for scroll gesture finger count attribution
+        if activeFingersCount > scrollPeakFingers {
+            scrollPeakFingers = activeFingersCount
         }
 
         currentFingers = activeFingersCount
@@ -1080,12 +1087,12 @@ class TrackpadMonitor {
             scrollDeltaX = 0; scrollDeltaY = 0
             scrollStartTime = Date()
             // Use multitouch finger count (reliable) instead of event.touches() (empty for global monitors)
-            scrollFingerCount = max(currentFingers, 2)
+            scrollFingerCount = max(scrollPeakFingers, currentFingers, 2)
         }
 
         // Update finger count from multitouch if we missed .began
         if scrollFingerCount == 0 {
-            scrollFingerCount = max(currentFingers, 2)
+            scrollFingerCount = max(scrollPeakFingers, currentFingers, 2)
         }
         if scrollStartTime == nil {
             scrollStartTime = Date()
@@ -1100,13 +1107,17 @@ class TrackpadMonitor {
         }
 
         if event.phase == .ended || event.phase == .cancelled {
+            // Late correction: peak fingers is more reliable than what was captured at .began
+            if scrollPeakFingers > scrollFingerCount {
+                scrollFingerCount = scrollPeakFingers
+            }
             let absX = abs(scrollDeltaX); let absY = abs(scrollDeltaY)
             let duration = Date().timeIntervalSince(scrollStartTime ?? Date())
             let maxDelta = max(absX, absY)
             let velocity = duration > 0 ? maxDelta / CGFloat(duration) : 0
 
             guard maxDelta > swipeThreshold else {
-                scrollDeltaX = 0; scrollDeltaY = 0; scrollFingerCount = 0; scrollStartTime = nil; return
+                scrollDeltaX = 0; scrollDeltaY = 0; scrollFingerCount = 0; scrollStartTime = nil; scrollPeakFingers = 0; return
             }
             let gesture: TrackpadGesture?
 
@@ -1130,7 +1141,7 @@ class TrackpadMonitor {
                     fireGesture(gesture)
                 }
             }
-            scrollDeltaX = 0; scrollDeltaY = 0; scrollFingerCount = 0; scrollStartTime = nil
+            scrollDeltaX = 0; scrollDeltaY = 0; scrollFingerCount = 0; scrollStartTime = nil; scrollPeakFingers = 0
         }
     }
 
