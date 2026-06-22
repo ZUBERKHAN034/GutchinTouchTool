@@ -1427,10 +1427,10 @@ class TrackpadMonitor {
             let gesture: TrackpadGesture?
 
             // scrollDeltaY follows the natural scrolling setting.
-            // isDirectionInvertedFromDevice is true when natural scrolling
-            // is turned OFF (inverted from the device's native direction).
-            // When inverted, scrollDeltaY > 0 means physical finger DOWN.
-            let isInverted = event.isDirectionInvertedFromDevice
+            // A physical swipe UP produces positive scrollDeltaY when
+            // natural scrolling is ON, negative when OFF. We detect the
+            // physical direction by checking the UserDefaults setting.
+            let naturalScrollingOn = UserDefaults.standard.bool(forKey: "com.apple.swipescrolldirection")
 
             // If scrollFingerCount is 0-2 but we know more fingers were down
             // (from multitouch), use the peak count instead. This catches
@@ -1440,10 +1440,10 @@ class TrackpadMonitor {
             }
 
             if absX > absY {
-                let left = (scrollDeltaX > 0) != isInverted
+                let left = (scrollDeltaX > 0) == naturalScrollingOn
                 gesture = swipeGesture(fingers: scrollFingerCount, direction: left ? .left : .right)
             } else {
-                let up = (scrollDeltaY > 0) != isInverted
+                let up = (scrollDeltaY > 0) == naturalScrollingOn
                 gesture = swipeGesture(fingers: scrollFingerCount, direction: up ? .up : .down)
             }
             if let gesture = gesture {
