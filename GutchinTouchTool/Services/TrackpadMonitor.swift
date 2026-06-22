@@ -688,6 +688,26 @@ class TrackpadMonitor {
                 }
             }
 
+            // --- 4-finger swipe fallback ---
+            // macOS consumes 4-finger gestures (Mission Control, App Exposé)
+            // before the NSEvent handler sees any scroll events. When 4+
+            // fingers touch and lift with duration > tapTimeout (not a tap),
+            // this was likely a system gesture. Fire all configured 4-finger
+            // swipe directions — trigger matching picks the one the user set.
+            if peakFingers >= 4 && elapsed >= tapTimeout && elapsed < 1.0 && !swipeFiredThisSession {
+                GestureLog.shared.logFromAnyThread("4-finger swipe fallback (peak=\(peakFingers))", level: .detect)
+                swipeFiredThisSession = true
+                let directions: [TrackpadGesture] = [
+                    .fourFingerSwipeUp, .fourFingerSwipeDown,
+                    .fourFingerSwipeLeft, .fourFingerSwipeRight
+                ]
+                for dir in directions {
+                    if registeredTriggers.contains(where: { $0.gesture == dir }) {
+                        DispatchQueue.main.async { [self] in fireGesture(dir) }
+                    }
+                }
+            }
+
             touchBegan = nil
             peakFingers = 0
         }
