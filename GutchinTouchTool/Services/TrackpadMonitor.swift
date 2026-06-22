@@ -152,6 +152,9 @@ class TrackpadMonitor {
     /// This is preserved across the 60ms debounce delay so checkSwipeFromTap doesn't
     /// lose the finger count when peakFingers gets reset by the tap detection code.
     private var scrollEventFingers: Int = 0
+    /// Set once the multitouch callback has reported at least one frame.
+    /// Prevents the CGEventTap from consuming events before finger count is known.
+    private var multitouchHasReported = false
 
     // Double-tap detection state
     private var lastTwoFingerTapTime: Date?
@@ -312,6 +315,10 @@ class TrackpadMonitor {
     }
 
     func handleMultitouchFrame(rawTouches: UnsafeMutableRawPointer?, numTouches: Int, timestamp: Double) {
+        // Signal that multitouch data is available (CGEventTap reads this to decide
+        // whether to consume scroll events before system gesture handlers).
+        multitouchHasReported = true
+
         let activeFingersCount = numTouches
 
         // Collect finger data from raw touch buffer using detected stride
@@ -375,6 +382,15 @@ class TrackpadMonitor {
                     // Update last known position on every frame
                     multiSwipeLastY = avgY
                     multiSwipeLastX = avgX
+                }
+
+                // Also inform the CGEventTap path about the finger count so it
+                // can consume scroll events before Mission Control sees them.
+                // This runs on the multitouch thread, which fires before scroll
+                // events are generated, so scrollEventFingers is available when
+                // the CGEventTap callback processes the first scroll event.
+                if scrollEventFingers < activeFingersCount {
+                    scrollEventFingers = activeFingersCount
                 }
             }
         }
@@ -1105,9 +1121,12 @@ class TrackpadMonitor {
 
     // MARK: - NSEvent monitors for scroll/pinch/rotate + multitouch-based swipe detection
 
-    /// CGEventTap for scroll wheel events at `.cghidEventTap` level.
-    /// This is the lowest possible tap level — it sees ALL scroll events before
-    /// macOS system gesture handlers (Mission Control, App Exposé) consume them.
+    /// CGEventTap for scroll wheel events at session level.
+    /// Placed at headInsertEventTap to process events before macOS system gesture
+    /// handlers (Mission Control, App Exposé). For 3+ finger gestures (which macOS
+    /// would otherwise consume as system gestures), the event is CONSUMED here so
+    /// Mission Control never receives it — the app processes it as a regular swipe.
+    /// For 2-finger gestures (regular scrolling), events pass through normally.
     private func setupScrollEventTap() {
         let eventMask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
 
@@ -1120,42 +1139,47 @@ class TrackpadMonitor {
             let deltaY = CGFloat(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1))
             let deltaX = CGFloat(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2))
 
-            if abs(deltaY) > 1 || abs(deltaX) > 1 {
-                // Accumulate on the main thread to keep it thread-safe.
-                // Capture currentFingers at event time (the multitouch callback
-                // updates it at IOKit level, which fires before scroll events).
-                let fingers = monitor.currentFingers
-                DispatchQueue.main.async {
-                    monitor.scrollCumulativeX += deltaX
-                    monitor.scrollCumulativeY += deltaY
-                    monitor.scrollEventFingers = max(monitor.scrollEventFingers, fingers)
-                    if monitor.scrollTapStartTime == nil {
-                        monitor.scrollTapStartTime = Date()
-                    }
+            guard abs(deltaY) > 1 || abs(deltaX) > 1 else {
+                return Unmanaged.passRetained(event)
+            }
 
-                    let absX = abs(monitor.scrollCumulativeX)
-                    let absY = abs(monitor.scrollCumulativeY)
-                    let maxDelta = max(absX, absY)
+            let fingers = monitor.currentFingers
 
-                    if maxDelta > monitor.swipeThreshold {
-                        // For 3+ finger gestures, fire immediately — these are
-                        // always swipes (system gestures like Mission Control),
-                        // never regular scrolling.
-                        if monitor.scrollEventFingers >= 3 {
-                            monitor.checkSwipeFromTap()
-                        } else {
-                            // For 2-finger gestures, use debounce to
-                            // distinguish swipes from regular scrolling.
-                            monitor.scrollTapDebounceTimer?.cancel()
-                            let timer = DispatchWorkItem { monitor.checkSwipeFromTap() }
-                            monitor.scrollTapDebounceTimer = timer
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: timer)
-                        }
+            // Decide whether to consume or pass through BEFORE dispatching.
+            // Once multitouch has reported a frame, 3+ finger gestures are
+            // always system gestures — consume them here so the app can
+            // process them as regular swipes (Mission Control never sees them).
+            // For 2-finger gestures and events before multitouch activation,
+            // pass through normally to preserve regular scrolling.
+            let shouldConsume = monitor.multitouchHasReported && (fingers >= 3 || monitor.scrollEventFingers >= 3)
+
+            DispatchQueue.main.async {
+                monitor.scrollCumulativeX += deltaX
+                monitor.scrollCumulativeY += deltaY
+                monitor.scrollEventFingers = max(monitor.scrollEventFingers, fingers)
+                if monitor.scrollTapStartTime == nil {
+                    monitor.scrollTapStartTime = Date()
+                }
+
+                let absX = abs(monitor.scrollCumulativeX)
+                let absY = abs(monitor.scrollCumulativeY)
+                let maxDelta = max(absX, absY)
+
+                if maxDelta > monitor.swipeThreshold {
+                    if monitor.scrollEventFingers >= 3 {
+                        monitor.checkSwipeFromTap()
+                    } else {
+                        monitor.scrollTapDebounceTimer?.cancel()
+                        let timer = DispatchWorkItem { monitor.checkSwipeFromTap() }
+                        monitor.scrollTapDebounceTimer = timer
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: timer)
                     }
                 }
             }
 
-            return Unmanaged.passRetained(event)
+            // Consume 3+ finger gestures to prevent Mission Control from taking them.
+            // 2-finger events pass through (normal scrolling).
+            return shouldConsume ? nil : Unmanaged.passRetained(event)
         }
 
         scrollEventTap = CGEvent.tapCreate(
