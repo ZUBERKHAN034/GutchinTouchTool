@@ -120,6 +120,7 @@ class TrackpadMonitor {
     private var peakFingers: Int = 0
     private var currentFingers: Int = 0
     private var gestureConsumed = false
+    private var swipeFiredThisSession = false
     private let tapTimeout: TimeInterval = 0.35
     private var totalMovement: Float = 0
     private var previousPositions: [Int32: (Float, Float)] = [:] // fingerID -> (x, y)
@@ -334,6 +335,7 @@ class TrackpadMonitor {
             touchBegan = Date()
             peakFingers = activeFingersCount
             gestureConsumed = false
+            swipeFiredThisSession = false
             hadOneFingerRest = false
             oneFingerRestX = nil
             oneFingerStartTime = nil
@@ -519,6 +521,26 @@ class TrackpadMonitor {
                             GestureLog.shared.logFromAnyThread("Detected \(fingers)-finger tap (\(String(format: "%.2fs", dur)))", level: .detect)
                             fireGesture(gesture)
                         }
+                    }
+                }
+            }
+
+            // --- 4-finger swipe fallback ---
+            // macOS consumes 4-finger gestures (Mission Control, App Exposé)
+            // before the NSEvent handler sees any scroll events. When 4+
+            // fingers touch and lift with duration > tapTimeout (not a tap),
+            // this was likely a system gesture. Fire all configured 4-finger
+            // swipe directions — trigger matching picks the one the user set.
+            if peakFingers >= 4 && elapsed >= tapTimeout && elapsed < 1.0 && !swipeFiredThisSession {
+                GestureLog.shared.logFromAnyThread("4-finger swipe fallback (peak=\(peakFingers))", level: .detect)
+                swipeFiredThisSession = true
+                let directions: [TrackpadGesture] = [
+                    .fourFingerSwipeUp, .fourFingerSwipeDown,
+                    .fourFingerSwipeLeft, .fourFingerSwipeRight
+                ]
+                for dir in directions {
+                    if registeredTriggers.contains(where: { $0.gesture == dir }) {
+                        DispatchQueue.main.async { [self] in fireGesture(dir) }
                     }
                 }
             }
